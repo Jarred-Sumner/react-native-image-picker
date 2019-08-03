@@ -287,6 +287,10 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
         // Create the response object
         self.response = [[NSMutableDictionary alloc] init];
 
+        NSURL *videoRefURL = info[UIImagePickerControllerReferenceURL];
+        NSURL *videoURL = info[UIImagePickerControllerMediaURL];
+        NSURL *videoDestinationURL = [NSURL fileURLWithPath:path];
+        BOOL isCameraRollSourceCamera = NO;
         if ([mediaType isEqualToString:(NSString *)kUTTypeImage]) { // PHOTOS
             UIImage *originalImage;
             if ([[self.options objectForKey:@"allowsEditing"] boolValue]) {
@@ -389,7 +393,7 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
             // add ref to the original image
             NSString *origURL = [imageURL absoluteString];
             if (origURL) {
-              [self.response setObject:origURL forKey:@"origURL"];
+                [self.response setObject:origURL forKey:@"origURL"];
             }
 
             NSNumber *fileSizeValue = nil;
@@ -429,10 +433,6 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
             }
         }
         else { // VIDEO
-            NSURL *videoRefURL = info[UIImagePickerControllerReferenceURL];
-            NSURL *videoURL = info[UIImagePickerControllerMediaURL];
-            NSURL *videoDestinationURL = [NSURL fileURLWithPath:path];
-
             if (videoRefURL) {
                 PHAsset *pickedAsset = [PHAsset fetchAssetsWithALAssetURLs:@[videoRefURL] options:nil].lastObject;
                 NSString *originalFilename = [self originalFilenameForAsset:pickedAsset assetType:PHAssetResourceTypeVideo];
@@ -455,12 +455,12 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
                 }
 
                 if (videoURL) { // Protect against reported crash
-                  NSError *error = nil;
-                  [fileManager moveItemAtURL:videoURL toURL:videoDestinationURL error:&error];
-                  if (error) {
-                      self.callback(@[@{@"error": error.localizedFailureReason}]);
-                      return;
-                  }
+                    NSError *error = nil;
+                    [fileManager moveItemAtURL:videoURL toURL:videoDestinationURL error:&error];
+                    if (error) {
+                        self.callback(@[@{@"error": error.localizedFailureReason}]);
+                        return;
+                    }
                 }
             }
 
@@ -471,6 +471,7 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
 
             NSDictionary *storageOptions = [self.options objectForKey:@"storageOptions"];
             if (storageOptions && [[storageOptions objectForKey:@"cameraRoll"] boolValue] == YES && self.picker.sourceType == UIImagePickerControllerSourceTypeCamera) {
+                isCameraRollSourceCamera = YES;
                 ALAssetsLibrary *library = [[ALAssetsLibrary alloc] init];
                 [library writeVideoAtPathToSavedPhotosAlbum:videoDestinationURL completionBlock:^(NSURL *assetURL, NSError *error) {
                     if (error) {
@@ -489,7 +490,7 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
                                 }
                             }
 
-                            self.callback(@[self.response]);
+                            [self formatToMp4:mediaType videoDestinationURL:videoDestinationURL videoRefURL:videoRefURL];
                         }
                     }
                 }];
@@ -508,17 +509,78 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
                 [[storageOptions objectForKey:@"cameraRoll"] boolValue] == NO ||
                 self.picker.sourceType != UIImagePickerControllerSourceTypeCamera)
             {
-                self.callback(@[self.response]);
+                [self callbackIfNoFormatToMp4:mediaType videoDestinationURL:videoDestinationURL videoRefURL:videoRefURL];
             }
         }
         else {
-            self.callback(@[self.response]);
+            [self callbackIfNoFormatToMp4:mediaType videoDestinationURL:videoDestinationURL videoRefURL:videoRefURL];
+        }
+
+        if (!isCameraRollSourceCamera) {
+            [self formatToMp4:mediaType videoDestinationURL:videoDestinationURL videoRefURL:videoRefURL];
         }
     };
 
     dispatch_async(dispatch_get_main_queue(), ^{
         [picker dismissViewControllerAnimated:YES completion:dismissCompletionBlock];
     });
+}
+
+- (void)formatToMp4:(NSString*)mediaType
+videoDestinationURL:(NSURL*)videoDestinationURL
+        videoRefURL:(NSURL*)videoRefURL {
+    if ([[self.options objectForKey:@"formatToMp4"] boolValue] == YES && ![mediaType isEqualToString:(NSString *)kUTTypeImage]) {
+        NSURL *parentURL = [videoDestinationURL URLByDeletingLastPathComponent];
+        NSString *path = [[parentURL.path stringByAppendingString:@"/"] stringByAppendingString:[[NSUUID UUID] UUIDString]];
+        path = [path stringByAppendingString:@".mp4"];
+        NSURL *outputURL = [NSURL fileURLWithPath:path];
+        [self convertVideoToLowQuailtyWithInputURL:videoDestinationURL outputURL:outputURL handler:^(AVAssetExportSession *exportSession) {
+            if (exportSession.status == AVAssetExportSessionStatusCompleted) {
+                [self.response setObject:outputURL.absoluteString forKey:@"uri"];
+                self.callback(@[self.response]);
+            }
+            else {
+                [self.response setObject:videoDestinationURL.absoluteString forKey:@"uri"];
+                if (videoRefURL.absoluteString) {
+                    [self.response setObject:videoRefURL.absoluteString forKey:@"origURL"];
+                }
+                self.callback(@[self.response]);
+            }
+        }];
+    }
+}
+
+- (void)callbackIfNoFormatToMp4:(NSString*)mediaType
+            videoDestinationURL:(NSURL*)videoDestinationURL
+                    videoRefURL:(NSURL*)videoRefURL {
+    if ([mediaType isEqualToString:(NSString *)kUTTypeImage]) { // PHOTOS
+        self.callback(@[self.response]);
+    } else {
+        if ([[self.options objectForKey:@"formatToMp4"] boolValue] == NO) {
+            [self.response setObject:videoDestinationURL.absoluteString forKey:@"uri"];
+            if (videoRefURL.absoluteString) {
+                [self.response setObject:videoRefURL.absoluteString forKey:@"origURL"];
+            }
+            self.callback(@[self.response]);
+        }
+    }
+}
+
+- (void)convertVideoToLowQuailtyWithInputURL:(NSURL*)inputURL
+                                   outputURL:(NSURL*)outputURL
+                                     handler:(void (^)(AVAssetExportSession*))handler {
+    [[NSFileManager defaultManager] removeItemAtURL:outputURL error:nil];
+    AVURLAsset *asset = [AVURLAsset URLAssetWithURL:inputURL options:nil];
+    AVAssetExportSession *exportSession = [[AVAssetExportSession alloc] initWithAsset:asset presetName:AVAssetExportPresetMediumQuality];
+
+    exportSession.outputURL = outputURL;
+    exportSession.outputFileType = AVFileTypeMPEG4;
+    exportSession.shouldOptimizeForNetworkUse = YES;
+
+    [exportSession exportAsynchronouslyWithCompletionHandler:^(void)
+     {
+         handler(exportSession);
+     }];
 }
 
 - (void)imagePickerControllerDidCancel:(UIImagePickerController *)picker
