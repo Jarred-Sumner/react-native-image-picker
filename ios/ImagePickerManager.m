@@ -149,7 +149,7 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
 #endif
     }
     else { // RNImagePickerTargetLibrarySingleImage
-        self.picker.sourceType = UIImagePickerControllerSourceTypePhotoLibrary;
+        self.picker.sourceType = UIImagePickerControllerSourceTypeSavedPhotosAlbum;
     }
 
     if ([[self.options objectForKey:@"mediaType"] isEqualToString:@"video"]
@@ -468,6 +468,16 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
             if (videoRefURL.absoluteString) {
                 [self.response setObject:videoRefURL.absoluteString forKey:@"origURL"];
             }
+
+            AVURLAsset *asset = [AVURLAsset URLAssetWithURL:videoURL options:nil];
+            NSArray *tracks = [asset tracksWithMediaType:AVMediaTypeVideo];
+            AVAssetTrack *track = [tracks objectAtIndex:0];
+            self.response[@"width"] = @(track.naturalSize.width);
+            self.response[@"height"] = @(track.naturalSize.height);
+            CGAffineTransform transform = track.preferredTransform;
+            self.response[@"isVertical"] = @(transform.a == 0.0 && transform.d == 0.0 && (
+              (transform.b == 1.0 && transform.c == -1.0) || (transform.b == -1.0 && transform.c == 1.0)
+            ));
 
             NSDictionary *storageOptions = [self.options objectForKey:@"storageOptions"];
             if (storageOptions && [[storageOptions objectForKey:@"cameraRoll"] boolValue] == YES && self.picker.sourceType == UIImagePickerControllerSourceTypeCamera) {
