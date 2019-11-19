@@ -132,6 +132,7 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
 
 - (void)launchImagePicker:(RNImagePickerTarget)target
 {
+  dispatch_async(dispatch_get_main_queue(), ^{
     self.picker = [[UIImagePickerController alloc] init];
 
     if (target == RNImagePickerTargetCamera) {
@@ -217,6 +218,7 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
           showPickerViewController();
         }
     }
+  }]
 }
 
 - (NSString * _Nullable)originalFilenameForAsset:(PHAsset * _Nullable)asset assetType:(PHAssetResourceType)type {
